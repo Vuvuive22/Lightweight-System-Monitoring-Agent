@@ -1,0 +1,52 @@
+# =========================================================================
+#  sysmon-agent — systemd service unit
+# =========================================================================
+#
+# Install to: /lib/systemd/system/sysmon-agent.service
+# Then run:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sysmon-agent.service
+#
+# Trade-off note (root vs dedicated user):
+#   Running as a dedicated "sysmon" user is more secure and limits the
+#   blast radius of any vulnerability.  However, broad filesystem
+#   monitoring (e.g. /etc, /var) typically requires root-level read
+#   access.  If only specific user-owned directories are monitored you
+#   can safely uncomment the User/Group lines below.
+# =========================================================================
+
+[Unit]
+Description=Lightweight System Monitoring Agent
+Documentation=https://github.com/your-org/sysmon-agent
+After=network.target
+Wants=network.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+
+# --- Security: uncomment to run as a dedicated unprivileged user --------
+# User=sysmon
+# Group=sysmon
+
+ExecStart=/usr/bin/python3 -m agent.main /etc/sysmon-agent/config.json
+WorkingDirectory=/usr/share/sysmon-agent
+
+Restart=always
+RestartSec=5
+
+# Logging — stdout/stderr go to the systemd journal.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sysmon-agent
+
+# --- Hardening (optional but recommended) --------------------------------
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/log/sysmon-agent
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
