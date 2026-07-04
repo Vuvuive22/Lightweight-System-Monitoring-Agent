@@ -1,0 +1,17 @@
+{
+    "server_url": "http://127.0.0.1:8000/api/report",
+    "interval": 10,
+    "hostname_override": "",
+    "disk_mount_points": ["/"],
+    "services": ["sshd", "nginx", "mysql", "docker"],
+    "watched_files": [
+        "/etc/passwd",
+        "/etc/shadow",
+        "/etc/ssh/sshd_config"
+    ],
+    "watched_directories": [
+        "/var/www/html"
+    ],
+    "log_file": "/var/log/sysmon-agent.log",
+    "syslog_enabled": true
+}

@@ -133,3 +133,18 @@ agent.log
 .idea/
 .cursor/
 .cursorrules
+
+# Sysmon Central Databases & Journals
+*.db
+*.db-journal
+server/sysmon.db
+tests/test_sysmon.db
+
+# Built packages and archives
+*.deb
+*.rpm
+*.tar.gz
+
+# Evaluation documents (Internal assessment)
+docs/system_evaluation.md
+

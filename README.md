@@ -1,347 +1,305 @@
-# Lightweight System Monitoring Agent
+# Centralized System Monitoring System (Sysmon Central)
 
-> A production-ready Python daemon for Linux (Ubuntu/Debian) that collects system metrics, monitors filesystem changes in real-time, and routes structured logs to local files or remote Syslog servers.
+Hệ thống giám sát tài nguyên và ứng dụng dịch vụ tập trung đa máy ảo, sử dụng **Native Agent (không phụ thuộc)** trên các nút giám sát và **Central Manager Server** (FastAPI + SQLite) để lưu trữ và hiển thị.
 
 ---
 
-## System Architecture
+## 1. Kiến trúc hệ thống
 
 ```mermaid
 flowchart TB
-    subgraph "sysmon-agent daemon"
-        MAIN["main.py<br/>Daemon Loop &amp; Signal Handler"]
-        CFG["config.py<br/>Config Loader"]
-        LOG["logger.py<br/>Log Router"]
+    subgraph "Nút Giám Sát (Monitored Nodes)"
+        direction LR
+        L_AGENT["🐧 Linux Agent<br/>(Bash Script)"]
+        W_AGENT["🪟 Windows Agent<br/>(PowerShell Script)"]
+    end
 
-        subgraph "Collectors"
-            MET["metrics.py<br/>CPU · RAM · Disk · Network"]
-            WAT["watcher.py<br/>Filesystem Events"]
+    subgraph "Máy Chủ Trung Tâm (Central Server)"
+        FASTAPI["⚡ FastAPI App<br/>(server/main.py)"]
+        SQLITE["💾 SQLite Database<br/>(sysmon.db)"]
+        ALERT["🔔 Alert Engine<br/>(Threshold + Z-Score)"]
+        DASH["📊 Web Dashboard<br/>(server/static/)"]
+    end
+
+    subgraph "Người Quản Trị"
+        ADMIN["👨‍💻 Admin Browser"]
+    end
+
+    L_AGENT -->|HTTP POST JSON<br/>/api/report| FASTAPI
+    W_AGENT -->|HTTP POST JSON<br/>/api/report| FASTAPI
+    FASTAPI -->|Lưu metrics & services| SQLITE
+    FASTAPI -->|Phân tích| ALERT
+    ALERT -->|Ghi cảnh báo| SQLITE
+    ADMIN -->|Truy cập Dashboard| DASH
+    DASH -->|API calls| FASTAPI
+    FASTAPI -->|Truy vấn| SQLITE
+```
+
+---
+
+## 2. Workflow — Luồng hoạt động của hệ thống
+
+### 2.1 Luồng thu thập dữ liệu (Data Collection Flow)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Agent as 🖥️ Native Agent<br/>(Bash / PowerShell)
+    participant Proc as 📁 /proc & OS Tools
+    participant Server as ⚡ Central Server
+    participant DB as 💾 SQLite
+    participant Alert as 🔔 Alert Engine
+
+    rect rgb(20, 30, 50)
+    Note over Agent,Proc: Bước 1 — Thu thập metric từ OS
+    Agent->>Proc: Đọc /proc/stat (CPU ticks)
+    Agent->>Proc: Đọc /proc/meminfo (RAM)
+    Agent->>Proc: Đọc /proc/net/dev (Network)
+    Agent->>Proc: Đọc /proc/diskstats (Disk IO)
+    Agent->>Proc: Chạy df -B1 (Disk capacity)
+    Agent->>Proc: Chạy systemctl / Get-Service
+    Proc-->>Agent: Dữ liệu thô
+    end
+
+    rect rgb(20, 40, 30)
+    Note over Agent,Server: Bước 2 — Gửi JSON về Server
+    Agent->>Server: POST /api/report (JSON payload)
+    Server-->>Agent: {"status": "ok"}
+    end
+
+    rect rgb(40, 20, 30)
+    Note over Server,Alert: Bước 3 — Xử lý & Phân tích
+    Server->>DB: Đăng ký / Cập nhật Node
+    Server->>DB: Lưu metrics & services
+    Server->>Alert: Kiểm tra ngưỡng tĩnh
+    Server->>Alert: Tính Z-Score anomaly
+    Server->>Alert: Kiểm tra thay đổi dịch vụ
+    Alert->>DB: Ghi cảnh báo (nếu có)
+    end
+
+    Note over Agent: ⏱️ sleep(interval)
+    Note over Agent: 🔁 Lặp lại chu kỳ
+```
+
+### 2.2 Luồng phát hiện bất thường (Alert Detection Flow)
+
+```mermaid
+flowchart TD
+    START["📩 Nhận report từ Agent"] --> SAVE["💾 Lưu metrics vào DB"]
+
+    SAVE --> T_CHECK{"🔍 Kiểm tra<br/>Ngưỡng tĩnh"}
+    T_CHECK -->|"CPU ≥ 90%"| T_CPU["⚠️ THRESHOLD_CPU"]
+    T_CHECK -->|"RAM ≥ 95%"| T_RAM["⚠️ THRESHOLD_RAM"]
+    T_CHECK -->|"Disk ≥ 90%"| T_DISK["⚠️ THRESHOLD_DISK"]
+    T_CHECK -->|"Bình thường"| Z_CHECK
+
+    SAVE --> Z_CHECK{"📊 Z-Score<br/>Anomaly Detection"}
+    Z_CHECK -->|"Lấy 30 mẫu gần nhất"| Z_CALC["Tính μ, σ, Z-Score"]
+    Z_CALC -->|"|Z| > 2.5"| Z_ALERT["⚠️ ANOMALY_CPU / RAM"]
+    Z_CALC -->|"|Z| ≤ 2.5"| Z_OK["✅ Bình thường"]
+
+    SAVE --> S_CHECK{"🔧 Kiểm tra<br/>Dịch vụ"}
+    S_CHECK -->|"active → failed"| S_CRASH["🚨 SERVICE_CRASHED"]
+    S_CHECK -->|"active → inactive"| S_STOP["⚠️ SERVICE_STOPPED"]
+    S_CHECK -->|"inactive → active"| S_START["ℹ️ SERVICE_STARTED"]
+    S_CHECK -->|"Không đổi"| S_OK["✅ Ổn định"]
+
+    T_CPU --> LOG["📝 Ghi vào bảng alerts"]
+    T_RAM --> LOG
+    T_DISK --> LOG
+    Z_ALERT --> LOG
+    S_CRASH --> LOG
+    S_STOP --> LOG
+    S_START --> LOG
+
+    LOG --> DASH["📊 Hiển thị trên Dashboard"]
+
+    style T_CPU fill:#f59e0b,color:#000
+    style T_RAM fill:#f59e0b,color:#000
+    style T_DISK fill:#f59e0b,color:#000
+    style Z_ALERT fill:#f59e0b,color:#000
+    style S_CRASH fill:#ef4444,color:#fff
+    style S_STOP fill:#f59e0b,color:#000
+    style S_START fill:#3b82f6,color:#fff
+```
+
+### 2.3 Luồng giám sát trạng thái Node (Offline Detection Flow)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Worker as 🔄 Background Worker<br/>(mỗi 15 giây)
+    participant DB as 💾 SQLite
+    participant Dashboard as 📊 Dashboard
+
+    loop Mỗi 15 giây
+        Worker->>DB: SELECT * FROM nodes
+        DB-->>Worker: Danh sách nodes + last_seen
+
+        alt last_seen > 2 × interval
+            Worker->>DB: INSERT alert NODE_OFFLINE 🚨
+            Worker->>Worker: Log cảnh báo mất kết nối
+        else last_seen ≤ 2 × interval
+            Worker->>Worker: Node vẫn Online ✅
         end
     end
 
-    CONFIG_FILE["/etc/sysmon-agent/config.json"]
-    SYSTEMD["systemd<br/>sysmon-agent.service"]
-    LOG_FILE["/var/log/sysmon-agent/agent.log"]
-    SYSLOG["Syslog Server<br/>(local or remote)"]
+    Dashboard->>DB: GET /api/nodes
+    DB-->>Dashboard: Nodes + online/offline status
+    Dashboard->>Dashboard: Cập nhật badge 🟢/🔴
+```
 
-    SYSTEMD -->|manages| MAIN
-    CONFIG_FILE -->|loaded by| CFG
-    CFG -->|provides config to| MAIN
-    MAIN -->|initialises| LOG
-    MAIN -->|"every N seconds"| MET
-    MAIN -->|"real-time events"| WAT
-    MET -->|structured JSON| LOG
-    WAT -->|structured JSON| LOG
-    LOG -->|mode=file| LOG_FILE
-    LOG -->|mode=syslog| SYSLOG
+### 2.4 Luồng hiển thị Dashboard (UI Rendering Flow)
+
+```mermaid
+flowchart LR
+    subgraph "Dashboard Client (Browser)"
+        A["🔄 setInterval<br/>mỗi 5 giây"] --> B["GET /api/nodes"]
+        A --> C["GET /api/alerts"]
+        B --> D["Render Sidebar<br/>🟢 Online / 🔴 Offline"]
+        C --> E["Cập nhật số cảnh báo"]
+
+        F["👆 Click chọn Node"] --> G["GET /api/nodes/{hostname}/metrics"]
+        G --> H["Vẽ biểu đồ Chart.js<br/>CPU, RAM, Network, Disk IO"]
+        G --> I["Cập nhật Gauges<br/>% CPU, % RAM, % Disk"]
+        F --> J["Render Services<br/>🟢 active / 🟡 inactive / 🔴 failed"]
+        F --> K["Lọc & hiển thị<br/>bảng cảnh báo của Node"]
+    end
 ```
 
 ---
 
-## Prerequisites
-
-| Requirement | Version |
-|---|---|
-| Operating System | Ubuntu 20.04+ / Debian 11+ |
-| Python | 3.10+ |
-| `python3-psutil` | ≥ 5.9.0 |
-| `python3-watchdog` | ≥ 3.0.0 |
-| `dpkg-deb` | (for building the `.deb` package) |
-
----
-
-## Project Structure
+## 3. Cấu trúc dự án
 
 ```
-sysmon-agent/
-├── agent/
-│   ├── __init__.py
-│   ├── main.py                 # Daemon entry point
-│   ├── collectors/
-│   │   ├── __init__.py
-│   │   ├── metrics.py          # CPU, RAM, Disk, Network collector
-│   │   └── watcher.py          # Filesystem event monitor
-│   └── utils/
-│       ├── __init__.py
-│       ├── config.py           # Config loader & validator
-│       ├── logger.py           # Syslog / file log router
-│       ├── dashboard.py        # HTTP dashboard server
-│       └── dashboard.html      # Dashboard UI template
-├── config/
-│   └── config.json             # Default configuration
-├── deployment/
-│   └── sysmon-agent.service    # systemd unit file
-├── debian/
-│   └── build.sh                # .deb packaging script
-├── docs/
-│   └── system_design.md        # System design document
+sysmon-central/
+├── agents/                         # Các agent native (zero-dependency)
+│   ├── linux/
+│   │   ├── agent.sh                # Linux Bash Agent
+│   │   └── config.json             # Cấu hình agent
+│   └── windows/
+│       ├── agent.ps1               # Windows PowerShell Agent
+│       └── config.json             # Cấu hình agent
+├── server/                         # Máy chủ quản trị tập trung
+│   ├── __init__.py                 # Package marker
+│   ├── main.py                     # FastAPI Server + Alert Engine
+│   ├── database.py                 # SQLite database layer
+│   ├── config.py                   # Cấu hình ngưỡng & giải thuật
+│   ├── server_config.json          # File config chỉnh sửa được
+│   └── static/
+│       ├── index.html              # Dashboard UI (responsive)
+│       └── app.js                  # Dashboard logic + Chart.js
 ├── tests/
-│   ├── __init__.py
-│   ├── test_config.py          # Config loader tests
-│   ├── test_logger.py          # Logger tests
-│   ├── test_metrics.py         # Metrics collector tests
-│   ├── test_watcher.py         # Filesystem watcher tests
-│   └── test_dashboard.py       # Dashboard server tests
-├── demo.sh                     # Interactive demo script
-├── requirements.txt
+│   └── test_server_api.py          # 40 test cases (API, alerts, anomaly, DB)
+├── debian/                         # Đóng gói .deb cho agent Linux
+│   ├── DEBIAN/
+│   │   ├── control                 # Package metadata
+│   │   ├── postinst                # Post-install script
+│   │   └── prerm                   # Pre-removal script
+│   └── build_deb.py                # Script build file .deb (Portable Python)
+├── deployment/
+│   └── sysmon-agent.service        # Systemd service unit
+├── benchmark_agent.sh              # Script đo lường hiệu năng agent
+├── requirements.txt                # Server-only deps (FastAPI, Uvicorn)
 └── README.md
 ```
 
 ---
 
-## Configuration Reference
+## 4. Hướng dẫn thiết lập & Chạy máy chủ (Central Server)
 
-The configuration file is located at `/etc/sysmon-agent/config.json` after installation, or `config/config.json` during development.
-
-```json
-{
-    "interval": 30,
-    "disk_mount_points": ["/"],
-    "monitored_paths": ["/etc", "/var/log"],
-    "dashboard": {
-        "enabled": true,
-        "port": 8080,
-        "bind_address": "0.0.0.0"
-    },
-    "logging": {
-        "mode": "file",
-        "log_file_path": "/var/log/sysmon-agent/agent.log",
-        "max_bytes": 10485760,
-        "backup_count": 5,
-        "syslog_address": "127.0.0.1",
-        "syslog_port": 514,
-        "syslog_protocol": "udp"
-    }
-}
+### 4.1 Cài đặt các thư viện cần thiết:
+```bash
+pip install -r requirements.txt
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `interval` | `int` | `30` | Seconds between metrics collection cycles |
-| `disk_mount_points` | `list[str]` | `["/"]` | Mount points to monitor (avoids virtual FS) |
-| `monitored_paths` | `list[str]` | `[]` | Files/directories to watch for changes |
-| `logging.mode` | `str` | `"file"` | `"file"` for local log files, `"syslog"` for syslog |
-| `logging.log_file_path` | `str` | see above | Path for local log file (mode=file) |
-| `logging.max_bytes` | `int` | `10485760` | Max log file size before rotation (10 MB) |
-| `logging.backup_count` | `int` | `5` | Number of rotated log files to keep |
-| `logging.syslog_address` | `str` | `"127.0.0.1"` | Syslog server address or `/dev/log` |
-| `logging.syslog_port` | `int` | `514` | Syslog server port (mode=syslog) |
-| `logging.syslog_protocol` | `str` | `"udp"` | `"udp"` or `"tcp"` for remote syslog |
-| `dashboard.enabled` | `bool` | `true` | Enable/disable the web dashboard |
-| `dashboard.port` | `int` | `8080` | HTTP port for the dashboard server |
-| `dashboard.bind_address` | `str` | `"0.0.0.0"` | Bind address for the dashboard server |
+### 4.2 Khởi chạy Máy chủ:
+```bash
+python -m server.main
+```
+Mặc định máy chủ sẽ khởi chạy tại cổng `http://localhost:8000`. Bạn có thể truy cập trực tiếp bằng trình duyệt để xem giao diện Dashboard.
 
 ---
 
-## Build Instructions
+## 5. Hướng dẫn deploy Agent trên các máy ảo (Monitored Nodes)
 
-### Install Dependencies
+Các agent được tối ưu hóa để chạy **không phụ thuộc** vào Python hay thư viện ngoài, sử dụng chính các công cụ có sẵn của hệ điều hành.
 
+### 5.1 Cài đặt nhanh bằng file .deb (Ubuntu/Debian)
 ```bash
-sudo apt update
-sudo apt install python3 python3-pip dpkg-dev
-pip3 install -r requirements.txt
-```
+# Build file .deb (Hỗ trợ chạy trên cả Windows và Linux thông qua Python)
+python debian/build_deb.py
 
-### Build the `.deb` Package
+# Cài đặt trên máy ảo đích
+sudo dpkg -i sysmon-agent_2.0.0_all.deb
 
-```bash
-chmod +x debian/build.sh
-./debian/build.sh 1.0.0
-```
+# Sửa config chỉ đến Central Server
+sudo nano /opt/sysmon-agent/config.json
 
-The package will be output to `dist/sysmon-agent_1.0.0_all.deb`.
-
----
-
-## Deployment & Usage Guide
-
-### Install the Package
-
-```bash
-sudo dpkg -i dist/sysmon-agent_1.0.0_all.deb
-```
-
-If dependencies are missing, resolve them with:
-
-```bash
-sudo apt install -f
-```
-
-The `postinst` script will automatically:
-1. Reload the systemd daemon
-2. Enable the service for boot
-3. Start the service immediately
-
-### Modify Configuration
-
-```bash
-sudo nano /etc/sysmon-agent/config.json
-sudo systemctl restart sysmon-agent
-```
-
-### Service Management
-
-```bash
-# Check service status
-sudo systemctl status sysmon-agent
-
-# Start / Stop / Restart
+# Khởi động agent
 sudo systemctl start sysmon-agent
-sudo systemctl stop sysmon-agent
-sudo systemctl restart sysmon-agent
-
-# Enable / Disable auto-start on boot
-sudo systemctl enable sysmon-agent
-sudo systemctl disable sysmon-agent
 ```
 
-### View Logs
+### 5.2 Cài đặt thủ công trên máy ảo Linux
+1. Copy thư mục `agents/linux/` sang máy ảo đích.
+2. Cấu hình file `config.json` chỉ định địa chỉ của Central Server:
+   ```json
+   {
+       "server_url": "http://<IP_SERVER>:8000/api/report",
+       "interval": 10,
+       "disk_mount_points": ["/"],
+       "services": ["nginx", "mysql", "sshd"]
+   }
+   ```
+3. Cấp quyền thực thi và chạy agent:
+   ```bash
+   chmod +x agent.sh
+   ./agent.sh
+   ```
 
-```bash
-# Live follow via systemd journal
-sudo journalctl -u sysmon-agent -f
-
-# View last 100 lines
-sudo journalctl -u sysmon-agent -n 100
-
-# View logs since last boot
-sudo journalctl -u sysmon-agent -b
-
-# View local log file (if mode=file)
-sudo tail -f /var/log/sysmon-agent/agent.log
-```
-
-### Uninstall
-
-```bash
-# Remove package (keep config)
-sudo dpkg -r sysmon-agent
-
-# Remove package and purge config/logs
-sudo dpkg -P sysmon-agent
-```
+### 5.3 Cài đặt trên máy ảo Windows
+1. Copy thư mục `agents/windows/` sang máy ảo đích.
+2. Cấu hình file `config.json` tương tự như trên.
+3. Mở PowerShell với quyền Administrator và chạy script:
+   ```powershell
+   Set-ExecutionPolicy Bypass -Scope Process -Force
+   .\agent.ps1
+   ```
 
 ---
 
-## Metrics Output Example
+## 6. Các tính năng nổi bật & Thuật toán giám sát
 
-Each collection cycle produces a JSON snapshot:
-
-```json
-{
-    "timestamp": "2026-06-17T02:30:00.000000+00:00",
-    "cpu": {
-        "cpu_percent": 12.5,
-        "cpu_count_logical": 4,
-        "cpu_count_physical": 2
-    },
-    "memory": {
-        "total_bytes": 8368349184,
-        "available_bytes": 5234491392,
-        "used_bytes": 2847932416,
-        "used_percent": 37.4
-    },
-    "disk": {
-        "/": {
-            "total_bytes": 52710469632,
-            "used_bytes": 18340904960,
-            "free_bytes": 31647621120,
-            "used_percent": 36.7
-        }
-    },
-    "network": {
-        "cumulative": {
-            "bytes_sent": 1048576000,
-            "bytes_recv": 5242880000,
-            "packets_sent": 750000,
-            "packets_recv": 3200000,
-            "errin": 0,
-            "errout": 0,
-            "dropin": 0,
-            "dropout": 0
-        },
-        "delta": {
-            "bytes_sent": 32768,
-            "bytes_recv": 131072,
-            "bytes_sent_per_sec": 1092.27,
-            "bytes_recv_per_sec": 4369.07,
-            "elapsed_seconds": 30.0
-        }
-    }
-}
-```
+| Tính năng | Mô tả |
+|---|---|
+| **Lightweight Native Agents** | Chỉ dùng Bash (Linux) và PowerShell (Windows), file ~10 KB, không cần Python/pip |
+| **Rich Metrics** | CPU (load avg 1/5/15m), RAM (total/used/available/buffers/cached/swap), Disk IO (read/write MB/s), Network (Rx/Tx per interface) |
+| **Service Monitoring** | Giám sát trạng thái dịch vụ qua `systemctl` (Linux) / `Get-Service` (Windows) |
+| **Static Threshold Alerts** | Cảnh báo khi CPU ≥ 90%, RAM ≥ 95%, Disk ≥ 90% (có thể tùy chỉnh) |
+| **Z-Score Anomaly Detection** | Phát hiện biến động bất thường dựa trên 30 mẫu gần nhất (Z > 2.5) |
+| **Offline Node Detection** | Background worker phát hiện node mất kết nối sau 2× interval |
+| **Multi-node Dashboard** | Giao diện tập trung hiển thị tất cả máy ảo, biểu đồ Chart.js thời gian thực |
+| **Đóng gói .deb** | Cài đặt 1 lệnh `dpkg -i`, gỡ 1 lệnh `dpkg -r` |
 
 ---
 
-## Web Dashboard
+## 7. API Endpoints
 
-The agent includes a built-in lightweight web dashboard for real-time monitoring. When enabled, it serves an HTML interface that displays:
-
-- **CPU / RAM / Disk / Network** metric cards with live values and progress bars
-- **Historical chart** of CPU & RAM usage over time (Chart.js line chart)
-- **Disk usage** doughnut chart
-- **Filesystem events** table with colour-coded event types
-
-### Accessing the Dashboard
-
-```bash
-# Dashboard is enabled by default on port 8080
-# Open in your browser:
-http://<server-ip>:8080
-```
-
-### Dashboard API Endpoints
-
-| Endpoint | Method | Description |
+| Method | Endpoint | Mô tả |
 |---|---|---|
-| `/` | GET | Serve the dashboard HTML page |
-| `/api/logs` | GET | Return the last 200 parsed JSON log entries |
-| `/api/config` | GET | Return the current agent configuration |
-
-### Disabling the Dashboard
-
-Set `dashboard.enabled` to `false` in the configuration file:
-
-```json
-{
-    "dashboard": {
-        "enabled": false
-    }
-}
-```
+| `POST` | `/api/report` | Agent gửi dữ liệu metrics (JSON) |
+| `GET` | `/api/nodes` | Danh sách tất cả nodes + online/offline |
+| `GET` | `/api/nodes/{hostname}/metrics` | Lịch sử metrics của 1 node |
+| `GET` | `/api/nodes/{hostname}/services` | Trạng thái dịch vụ của 1 node |
+| `DELETE` | `/api/nodes/{hostname}` | Xóa node và toàn bộ dữ liệu |
+| `GET` | `/api/alerts` | Danh sách cảnh báo gần đây |
+| `GET` | `/` | Web Dashboard |
 
 ---
 
-## Documentation
-
-- **System Design Document**: See [`docs/system_design.md`](docs/system_design.md) for detailed architecture, sequence diagrams, data schemas, design decisions, and trade-off analysis.
-
----
-
-## Quick Demo (without .deb)
-
-Run the interactive demo directly from the source tree on any Linux machine:
+## 8. Chạy kiểm thử
 
 ```bash
-# Install dependencies
-pip3 install psutil watchdog
-
-# Run the demo
-chmod +x demo.sh
-sudo ./demo.sh
+python -m pytest tests/ -v
 ```
-
-The demo will:
-1. Create a temporary config and watched directory
-2. Start the agent in the background
-3. Show a real metrics collection snapshot (CPU, RAM, Disk, Network)
-4. Create, modify, and delete files to trigger filesystem events
-5. Display all captured events in formatted output
-6. Clean up and stop the agent
-
----
-
-## License
-
-MIT
+Kết quả: **40 test cases passed** — bao phủ API endpoints, threshold alerts, Z-Score anomaly, service monitoring, database layer, và config loading.

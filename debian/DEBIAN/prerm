@@ -1,0 +1,11 @@
+#!/bin/bash
+# Pre-removal script: stop and disable the sysmon-agent service
+
+set -e
+
+echo ">>> Dừng sysmon-agent..."
+systemctl stop sysmon-agent.service 2>/dev/null || true
+systemctl disable sysmon-agent.service 2>/dev/null || true
+systemctl daemon-reload
+
+echo ">>> Sysmon Agent đã được gỡ bỏ."

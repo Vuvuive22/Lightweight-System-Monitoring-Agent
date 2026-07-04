@@ -1,0 +1,28 @@
+#!/bin/bash
+# Post-installation script: enable and start the sysmon-agent service
+
+set -e
+
+echo ">>> Cấu hình sysmon-agent..."
+
+# Ensure agent script is executable
+chmod +x /opt/sysmon-agent/agent.sh
+
+# Reload systemd and enable service
+systemctl daemon-reload
+systemctl enable sysmon-agent.service
+
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║  Sysmon Agent đã cài đặt thành công!                       ║"
+echo "║                                                             ║"
+echo "║  Cấu hình:  /opt/sysmon-agent/config.json                  ║"
+echo "║  Sửa server_url thành IP của Central Server trước khi chạy. ║"
+echo "║                                                             ║"
+echo "║  Khởi động:                                                 ║"
+echo "║    sudo systemctl start sysmon-agent                        ║"
+echo "║                                                             ║"
+echo "║  Xem logs:                                                  ║"
+echo "║    sudo journalctl -u sysmon-agent -f                       ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+echo ""

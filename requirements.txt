@@ -1,2 +1,7 @@
-psutil>=5.9.0
-watchdog>=3.0.0
+# Central Server dependencies (chỉ cài trên máy chủ quản trị)
+fastapi>=0.100.0
+uvicorn>=0.20.0
+
+# Development / Testing
+pytest>=8.0.0
+httpx>=0.24.0

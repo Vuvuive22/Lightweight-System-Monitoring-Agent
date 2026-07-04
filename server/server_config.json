@@ -1,0 +1,15 @@
+{
+    "host": "0.0.0.0",
+    "port": 8000,
+    "alert_thresholds": {
+        "cpu_percent": 90.0,
+        "ram_percent": 95.0,
+        "disk_percent": 90.0
+    },
+    "anomaly_detection": {
+        "enabled": true,
+        "z_threshold": 2.5,
+        "window_size": 30
+    },
+    "alert_cooldown_seconds": 300
+}

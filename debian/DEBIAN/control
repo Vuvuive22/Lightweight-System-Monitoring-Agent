@@ -1,0 +1,12 @@
+Package: sysmon-agent
+Version: 2.0.0
+Section: admin
+Priority: optional
+Architecture: all
+Depends: bash, curl, coreutils, procps
+Maintainer: Sysmon Team <sysmon@example.com>
+Description: Sysmon Lightweight Monitoring Agent
+ Agent giám sát hệ thống siêu nhẹ (zero-dependency) cho Linux.
+ Thu thập CPU, RAM, Disk, Network, Services và gửi về Central Server.
+ Chỉ sử dụng các công cụ có sẵn của hệ điều hành (bash, /proc, df, curl).
+ Không cần cài đặt Python hay thư viện bên ngoài.

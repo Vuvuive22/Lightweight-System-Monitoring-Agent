@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sysmon Central Dashboard</title>
+    <!-- Google Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Chart.js via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <style>
+        :root {
+            --bg-primary: #0b0f19;
+            --bg-card: rgba(22, 28, 45, 0.6);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            
+            --color-cpu: #3b82f6;
+            --color-ram: #a855f7;
+            --color-disk: #10b981;
+            
+            --status-active: #10b981;
+            --status-inactive: #f59e0b;
+            --status-failed: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            background-image: 
+                radial-gradient(at 10% 10%, rgba(59, 130, 246, 0.1) 0px, transparent 50%),
+                radial-gradient(at 90% 90%, rgba(168, 85, 247, 0.1) 0px, transparent 50%);
+            background-attachment: fixed;
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Server Disconnect Banner */
+        .disconnect-banner {
+            display: none;
+            background: rgba(239, 68, 68, 0.2);
+            border-bottom: 1px solid rgba(239, 68, 68, 0.4);
+            padding: 10px 20px;
+            color: #f87171;
+            font-size: 14px;
+            font-weight: 500;
+            text-align: center;
+        }
+        .disconnect-banner.visible { display: block; }
+
+        /* App Layout */
+        .app-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(11, 15, 25, 0.8);
+            backdrop-filter: blur(10px);
+        }
+
+        .logo-area h1 {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #60a5fa 0%, #c084fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .logo-area p {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 2px;
+        }
+
+        .global-stats {
+            display: flex;
+            gap: 20px;
+        }
+        .global-stat-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 8px 16px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .global-stat-card strong { font-size: 16px; }
+
+        .main-container {
+            flex-grow: 1;
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            min-height: 0; /* Important for inner scrolls */
+        }
+
+        /* Sidebar - Nodes List */
+        .sidebar {
+            border-right: 1px solid var(--border-color);
+            background: rgba(11, 15, 25, 0.4);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .sidebar-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .node-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .node-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .node-item:hover, .node-item.active {
+            border-color: rgba(255, 255, 255, 0.2);
+            background: rgba(59, 130, 246, 0.08);
+            transform: translateY(-1px);
+        }
+
+        .node-item.active {
+            border-color: #3b82f6;
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.15);
+        }
+
+        .node-info-left {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .node-name {
+            font-size: 15px;
+            font-weight: 600;
+        }
+        .node-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .status-dot.online {
+            background-color: var(--status-active);
+            box-shadow: 0 0 8px var(--status-active);
+        }
+        .status-dot.offline {
+            background-color: var(--status-failed);
+            box-shadow: 0 0 8px var(--status-failed);
+        }
+
+        /* Detail Panel */
+        .content-panel {
+            padding: 24px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .empty-selection-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            flex-grow: 1;
+            color: var(--text-secondary);
+            font-size: 16px;
+            gap: 12px;
+        }
+
+        /* Selected Node Header */
+        .node-header-card {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+        }
+        .node-header-left h2 {
+            font-size: 20px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .node-header-grid {
+            display: flex;
+            gap: 24px;
+            margin-top: 8px;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        .node-header-grid strong {
+            color: var(--text-primary);
+        }
+
+        /* Metrics grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            transition: all 0.2s ease;
+        }
+        .card:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+        .card-title {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 500;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .card-value {
+            font-size: 28px;
+            font-weight: 700;
+        }
+        .progress-bar-container {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 9999px;
+            overflow: hidden;
+            margin-top: 8px;
+        }
+        .progress-bar {
+            height: 100%;
+            border-radius: 9999px;
+            width: 0%;
+            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* Service Cards */
+        .services-section h3 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: var(--text-secondary);
+        }
+        .services-grid {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .service-badge {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            padding: 8px 16px;
+            border-radius: 10px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .service-badge .indicator-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+        .service-badge.active .indicator-dot { background-color: var(--status-active); box-shadow: 0 0 6px var(--status-active); }
+        .service-badge.inactive .indicator-dot { background-color: var(--status-inactive); box-shadow: 0 0 6px var(--status-inactive); }
+        .service-badge.failed .indicator-dot { background-color: var(--status-failed); box-shadow: 0 0 6px var(--status-failed); }
+
+        /* Charts Container */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+        .chart-card {
+            min-height: 280px;
+            display: flex;
+            flex-direction: column;
+        }
+        .chart-wrapper {
+            flex-grow: 1;
+            position: relative;
+            height: 220px;
+        }
+
+        /* Warnings Log */
+        .alerts-section h3 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: var(--text-secondary);
+        }
+        .alerts-table-wrapper {
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            text-align: left;
+            background: var(--bg-card);
+        }
+        th {
+            background: rgba(255, 255, 255, 0.02);
+            padding: 12px 16px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+        }
+        td {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        tr:last-child td { border-bottom: none; }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .badge.critical { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+        .badge.warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+        .badge.info { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+
+        /* Delete Node Button */
+        .btn-delete-node {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #f87171;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn-delete-node:hover {
+            background: rgba(239, 68, 68, 0.25);
+            border-color: rgba(239, 68, 68, 0.6);
+        }
+
+        /* Auto-refresh indicator */
+        .refresh-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .refresh-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--status-active);
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.8); }
+        }
+
+        /* File Monitoring Section */
+        .file-monitor-section h3 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: var(--text-secondary);
+        }
+        .file-monitor-table-wrapper {
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .file-status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 2px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .file-status-badge.exists {
+            background: rgba(16, 185, 129, 0.12);
+            color: #34d399;
+        }
+        .file-status-badge.deleted {
+            background: rgba(239, 68, 68, 0.12);
+            color: #f87171;
+        }
+        .file-type-icon {
+            font-size: 14px;
+            margin-right: 4px;
+        }
+        .hash-text {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: var(--text-secondary);
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            display: inline-block;
+        }
+
+        /* ========== Responsive Media Queries ========== */
+        @media (max-width: 1024px) {
+            .main-container {
+                grid-template-columns: 240px 1fr;
+            }
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            .card.chart-card[style*="grid-column"] {
+                grid-column: span 1 !important;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .app-header {
+                flex-direction: column;
+                gap: 12px;
+                padding: 16px 20px;
+            }
+            .global-stats {
+                width: 100%;
+                justify-content: center;
+            }
+            .main-container {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr;
+            }
+            .sidebar {
+                border-right: none;
+                border-bottom: 1px solid var(--border-color);
+                max-height: 200px;
+                overflow-y: auto;
+            }
+            .node-list {
+                flex-direction: row;
+                overflow-x: auto;
+                flex-wrap: nowrap;
+            }
+            .node-item {
+                min-width: 200px;
+                flex-shrink: 0;
+            }
+            .content-panel {
+                padding: 16px;
+            }
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+            .card.chart-card[style*="grid-column"] {
+                grid-column: span 1 !important;
+            }
+            .node-header-grid {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Disconnect Banner -->
+    <div class="disconnect-banner" id="disconnect-banner">
+        ⚠️ Mất kết nối đến Central Monitor Server. Vui lòng kiểm tra lại dịch vụ máy chủ.
+    </div>
+
+    <!-- Header -->
+    <div class="app-header">
+        <div class="logo-area">
+            <h1>Sysmon Central Dashboard</h1>
+            <p>Hệ thống giám sát và quản lý tập trung đa máy ảo</p>
+        </div>
+        <div class="global-stats">
+            <div class="global-stat-card">
+                🟢 Online: <strong id="global-online">0</strong>
+            </div>
+            <div class="global-stat-card">
+                🔴 Offline: <strong id="global-offline">0</strong>
+            </div>
+            <div class="global-stat-card">
+                🚨 Cảnh báo: <strong id="global-alerts" style="color: #f87171;">0</strong>
+            </div>
+            <div class="refresh-indicator">
+                <span class="refresh-dot"></span>
+                <span>Tự động cập nhật</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="main-container">
+        <!-- Sidebar: Nodes Selection -->
+        <div class="sidebar">
+            <div class="sidebar-title">Danh sách máy ảo</div>
+            <div class="node-list" id="node-list">
+                <!-- Node items will be populated by app.js -->
+                <div class="empty-state" style="font-size: 13px; color: var(--text-secondary); text-align: center; padding: 20px;">
+                    Đang tìm kiếm máy ảo...
+                </div>
+            </div>
+        </div>
+
+        <!-- Content Area -->
+        <div class="content-panel" id="content-panel">
+            <!-- Empty state when no node is selected -->
+            <div class="empty-selection-state" id="empty-selection-state">
+                <svg width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25M19.5 5.25l-3.59 3.59a2.25 2.25 0 00-.635 1.597 2.25 2.25 0 01-4.5 0 2.25 2.25 0 00-.635-1.597l-3.59-3.59m12 0A2.25 2.25 0 0017.25 3H6.75A2.25 2.25 0 004.5 5.25"/></svg>
+                <span>Vui lòng chọn một máy ảo từ thanh bên để xem thông tin chi tiết.</span>
+            </div>
+
+            <!-- Details Workspace (hidden initially) -->
+            <div id="details-workspace" style="display: none; flex-direction: column; gap: 20px;">
+                <!-- Node Header Info Card -->
+                <div class="node-header-card">
+                    <div class="node-header-left">
+                        <h2 id="node-title">
+                            <span class="status-dot online" id="node-status-dot"></span>
+                            <span id="node-name-label">hostname</span>
+                        </h2>
+                        <div class="node-header-grid">
+                            <span>HĐH: <strong id="node-os">-</strong></span>
+                            <span>IP: <strong id="node-ip">-</strong></span>
+                            <span>CPU Cores: <strong id="node-cores">-</strong></span>
+                            <span>Uptime: <strong id="node-uptime">-</strong></span>
+                        </div>
+                    </div>
+                    <button class="btn-delete-node" id="btn-delete-node" onclick="deleteSelectedNode()">
+                        🗑️ Xóa Node
+                    </button>
+                </div>
+
+                <!-- Instant Gauges Grid -->
+                <div class="metrics-grid">
+                    <div class="card">
+                        <div class="card-title">Sử dụng CPU</div>
+                        <div class="card-value" id="val-cpu">0.0%</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="bar-cpu" style="background: var(--color-cpu)"></div>
+                        </div>
+                        <div class="card-sub">
+                            <span>Chỉ số tải (1m): <strong id="val-load">-</strong></span>
+                            <span>100% Max</span>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Bộ nhớ RAM</div>
+                        <div class="card-value" id="val-ram">0.0%</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="bar-ram" style="background: var(--color-ram)"></div>
+                        </div>
+                        <div class="card-sub">
+                            <span id="val-ram-usage">- / - GB</span>
+                            <span>Đã dùng</span>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-title">Bộ nhớ Đĩa (/)</div>
+                        <div class="card-value" id="val-disk">0.0%</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar" id="bar-disk" style="background: var(--color-disk)"></div>
+                        </div>
+                        <div class="card-sub">
+                            <span id="val-disk-usage">- / - GB</span>
+                            <span>Dung lượng ổ đĩa chính</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Services monitoring -->
+                <div class="services-section">
+                    <h3>Giám sát ứng dụng và dịch vụ</h3>
+                    <div class="services-grid" id="services-grid">
+                        <div class="service-badge">Chưa cấu hình dịch vụ</div>
+                    </div>
+                </div>
+
+                <!-- File & Directory Monitoring -->
+                <div class="file-monitor-section">
+                    <h3>📁 Giám sát File & Thư mục</h3>
+                    <div class="file-monitor-table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Đường dẫn</th>
+                                    <th>Loại</th>
+                                    <th>Trạng thái</th>
+                                    <th>Kích thước</th>
+                                    <th>Hash (MD5)</th>
+                                    <th>Lần sửa cuối</th>
+                                </tr>
+                            </thead>
+                            <tbody id="file-monitor-body">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; color: var(--text-secondary); padding: 16px;">
+                                        Chưa có file/thư mục nào được cấu hình giám sát trên agent này.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Historic Charts Section -->
+                <div class="charts-grid">
+                    <div class="card chart-card">
+                        <div class="card-title">Lịch sử tải CPU & RAM (%)</div>
+                        <div class="chart-wrapper">
+                            <canvas id="chart-cpu-ram"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="card chart-card">
+                        <div class="card-title">Lưu lượng Mạng (Bandwidth Rx/Tx)</div>
+                        <div class="chart-wrapper">
+                            <canvas id="chart-network"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="card chart-card" style="grid-column: span 2;">
+                        <div class="card-title">Tốc độ ghi/đọc ổ đĩa (Disk I/O Bytes)</div>
+                        <div class="chart-wrapper">
+                            <canvas id="chart-disk-io"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Node Alert/Anomaly Logs -->
+                <div class="alerts-section">
+                    <h3>Nhật ký sự kiện bất thường và Cảnh báo</h3>
+                    <div class="alerts-table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Thời gian</th>
+                                    <th>Phân loại</th>
+                                    <th>Mức độ</th>
+                                    <th>Chi tiết sự kiện</th>
+                                </tr>
+                            </thead>
+                            <tbody id="alerts-table-body">
+                                <tr>
+                                    <td colspan="4" style="text-align: center; color: var(--text-secondary); padding: 16px;">
+                                        Không có cảnh báo nào được ghi nhận.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Include Javascript logic -->
+    <script src="/static/app.js"></script>
+</body>
+</html>
