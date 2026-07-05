@@ -15,6 +15,7 @@ def get_db_connection() -> sqlite3.Connection:
     """Return a connection to the SQLite database with row factory enabled."""
     conn = sqlite3.connect(str(DB_FILE))
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
@@ -105,6 +106,12 @@ def init_db() -> None:
                 FOREIGN KEY(hostname) REFERENCES nodes(hostname) ON DELETE CASCADE
             )
         """)
+        
+        # Clean up orphaned records from deleted nodes
+        cursor.execute("DELETE FROM alerts WHERE hostname NOT IN (SELECT hostname FROM nodes)")
+        cursor.execute("DELETE FROM metrics WHERE hostname NOT IN (SELECT hostname FROM nodes)")
+        cursor.execute("DELETE FROM services WHERE hostname NOT IN (SELECT hostname FROM nodes)")
+        cursor.execute("DELETE FROM file_monitors WHERE hostname NOT IN (SELECT hostname FROM nodes)")
         
         conn.commit()
 
@@ -343,4 +350,11 @@ def delete_node(hostname: str) -> None:
     """Remove a node and all its referenced metrics/alerts."""
     with get_db_connection() as conn:
         conn.execute("DELETE FROM nodes WHERE hostname=?", (hostname,))
+        conn.commit()
+
+
+def delete_offline_alerts(hostname: str) -> None:
+    """Remove any NODE_OFFLINE alerts for a node since it is now online."""
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM alerts WHERE hostname=? AND alert_type='NODE_OFFLINE'", (hostname,))
         conn.commit()

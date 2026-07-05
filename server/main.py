@@ -278,6 +278,9 @@ async def report_metrics(request: Request, payload: dict[str, Any]):
         interval_seconds=10,  # assume 10s default
     )
 
+    # Clean up any offline alerts since the node is now active
+    database.delete_offline_alerts(hostname)
+
     # 2. Save Historical Metrics & Service Status
     database.save_metrics(hostname, timestamp, payload)
     
